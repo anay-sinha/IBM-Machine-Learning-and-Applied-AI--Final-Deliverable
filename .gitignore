@@ -95,3 +95,8 @@ optuna_study.db-journal
 # Reports & generated outputs
 reports/
 !reports/.gitkeep
+
+# Ignore all zip files in data
+data/raw/*.zip
+# Or ignore raw data entirely
+data/raw/
