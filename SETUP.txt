@@ -1,0 +1,219 @@
+================================================================================
+  FRAUD DETECTION ML PIPELINE — SETUP & QUICKSTART GUIDE
+================================================================================
+
+--------------------------------------------------------------------------------
+BEFORE YOU RUN THE PROJECT
+--------------------------------------------------------------------------------
+
+1. PYTHON INSTALLATION
+   --------------------
+   Make sure Python 3.10 or higher is installed and accessible from your terminal.
+   Download from: https://www.python.org/downloads/
+
+   Verify with:
+       python --version
+
+2. CREATE A VIRTUAL ENVIRONMENT (Recommended)
+   --------------------------------------------
+   It is strongly recommended to use a virtual environment to avoid
+   dependency conflicts with other projects.
+
+       python -m venv .venv
+
+   Activate it:
+     - Windows:   .venv\Scripts\activate
+     - macOS/Linux: source .venv/bin/activate
+
+3. INSTALL DEPENDENCIES
+   ----------------------
+   With the virtual environment active, install all required packages:
+
+       pip install --upgrade pip
+       pip install -r requirements.txt
+
+   Note: This includes torch, xgboost, lightgbm, catboost, shap, fastapi,
+   and imbalanced-learn. Full install may take a few minutes.
+
+4. ADD YOUR DATASET
+   ------------------
+   Place your dataset ZIP file at:
+
+       data/raw/creditcard.zip
+
+   The ZIP must contain exactly one CSV file inside it.
+   The pipeline reads the CSV directly from the ZIP — no manual extraction needed.
+
+   Supported schemas:
+     - European Credit Card (ECC) dataset — columns: Time, Amount, V1..V28, Class
+     - IEEE-CIS Fraud Detection dataset  — configure column names in PipelineConfig
+
+   Dataset source (ECC): https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud
+
+5. GPU SUPPORT (Optional)
+   ------------------------
+   If you have an NVIDIA GPU, install the CUDA-enabled version of PyTorch
+   by following the instructions at: https://pytorch.org/get-started/locally/
+   The deep learning models (MLP, LSTM) will automatically use the GPU if available.
+
+6. FOLDER STRUCTURE CHECK
+   ------------------------
+   Before running, your project should look like this:
+
+       fraud_detection/
+       ├── data/
+       │   └── raw/
+       │       └── creditcard.zip        ← your dataset here
+       ├── models/                       ← created automatically during training
+       ├── reports/                      ← created automatically during evaluation
+       ├── tests/
+       │   ├── __init__.py
+       │   ├── test_app.py
+       │   ├── test_data_pipeline.py
+       │   ├── test_evaluate.py
+       │   ├── test_feature_engineering.py
+       │   └── test_models.py
+       ├── app.py
+       ├── conftest.py
+       ├── data_pipeline.py
+       ├── Dockerfile
+       ├── evaluate.py
+       ├── feature_engineering.py
+       ├── pyproject.toml
+       ├── requirements.txt
+       ├── SETUP.txt
+       └── train.py
+
+
+--------------------------------------------------------------------------------
+QUICKSTART ORDER
+--------------------------------------------------------------------------------
+
+Run these commands in order from inside the fraud_detection/ directory.
+
+STEP 1 — Preprocess the data
+------------------------------
+   python data_pipeline.py --data data/raw/creditcard.zip --strategy smote_tomek
+
+   This will:
+   - Load and clean the dataset from the ZIP file
+   - Apply cyclical temporal encoding (hour, day-of-week)
+   - Log-transform and scale transaction amounts
+   - Handle class imbalance using SMOTE-Tomek
+   - Save train/val/test splits to data/processed/
+
+   Other imbalance strategy options:
+       --strategy adasyn          (adaptive density oversampling)
+       --strategy cost_weight     (no resampling; uses scale_pos_weight in models)
+       --strategy none            (no imbalance handling — baseline only)
+
+STEP 2 — Train all models
+---------------------------
+   python train.py --processed-dir data/processed
+
+   This will train and save:
+   - XGBoost, LightGBM, CatBoost (tree ensembles)
+   - MLP with residual skip connections (deep learning)
+   - LSTM / GRU sequence model (temporal deep learning)
+   - Isolation Forest (unsupervised anomaly detection)
+   - Autoencoder (reconstruction-error anomaly detection)
+   - Stacking ensemble with Platt calibration (meta-learner)
+
+   All models are saved to models/
+
+STEP 3 — Evaluate models
+--------------------------
+   python evaluate.py --processed-dir data/processed
+
+   This will produce:
+   - PR-AUC, ROC-AUC, F1, Recall @ 1% FPR, Recall @ 5% FPR
+   - Cost-utility matrix (missed fraud vs. false alarm costs)
+   - SHAP global feature importance charts
+   - Calibration curves
+   - All results saved to reports/
+
+STEP 4 — Start the API server
+-------------------------------
+   uvicorn app:app --host 0.0.0.0 --port 8000
+
+   The API will be available at: http://localhost:8000
+
+   Endpoints:
+     POST  /score          — score a single transaction (real-time)
+     POST  /score/batch    — score up to 500 transactions at once
+     GET   /health         — liveness check
+     GET   /model/info     — loaded model metadata
+     GET   /metrics        — Prometheus-compatible metrics
+
+   Interactive API docs: http://localhost:8000/docs
+
+STEP 5 — Run tests
+-------------------
+   pytest tests/
+
+   Runs all unit and integration tests with coverage report.
+   Coverage HTML report saved to reports/coverage/
+
+
+--------------------------------------------------------------------------------
+DOCKER (OPTIONAL — for containerised deployment)
+--------------------------------------------------------------------------------
+
+Build the image:
+    docker build -t fraud-detection:latest .
+
+Run the container:
+    docker run -p 8000:8000 \
+        -v $(pwd)/models:/app/models:ro \
+        -v $(pwd)/data:/app/data:ro \
+        fraud-detection:latest
+
+The API will be available at: http://localhost:8000
+
+
+--------------------------------------------------------------------------------
+EXAMPLE API REQUEST
+--------------------------------------------------------------------------------
+
+Score a single transaction (replace feature values with real ones):
+
+    curl -X POST http://localhost:8000/score \
+         -H "Content-Type: application/json" \
+         -d '{
+               "features": {
+                 "V1": -1.36,
+                 "V2": -0.07,
+                 "V3": 2.54,
+                 "Amount_log1p": 5.42,
+                 "hour_sin": 0.87,
+                 "hour_cos": 0.49
+               }
+             }'
+
+Expected response:
+    {
+      "risk_score": 0.923,
+      "fraud_flag": true,
+      "threshold": 0.5,
+      "shap_top3": [
+        {"feature": "V14", "value": -5.12, "shap_value": 0.41, "direction": "increases_fraud_risk"},
+        {"feature": "V4",  "value":  2.30, "shap_value": 0.29, "direction": "increases_fraud_risk"},
+        {"feature": "V12", "value": -3.10, "shap_value": 0.18, "direction": "increases_fraud_risk"}
+      ],
+      "model_version": "1.0.0",
+      "latency_ms": 4.2
+    }
+
+
+--------------------------------------------------------------------------------
+NOTES
+--------------------------------------------------------------------------------
+
+- Never commit the data/ or models/ folders to Git (large files).
+- Never commit .env or secrets files to Git.
+- The stacking ensemble (models/stacking_ensemble.joblib) is the default
+  model loaded by the API. Change the model_name in app.py lifespan if needed.
+- SHAP explanations are computed per-request using TreeExplainer (fast for
+  tree models) or KernelExplainer (fallback for deep/stacking models).
+
+================================================================================
